@@ -18,7 +18,7 @@ go vet ./...
 - `Close()` stops admissions, unblocks waiting submitters, and drains accepted work.
 - `Cancel()` signals cooperative cancellation; queued work can be abandoned.
 - `Results()` closes when workers exit. **Consume results concurrently**, or workers can block on the bounded result channel.
-- Retries use a fixed configurable delay. Panics are converted into job errors.
+- Retries use exponential backoff with optional `MaxRetryDelay` cap. Panics are converted into job errors.
 
 ## Shutdown contract
 
@@ -27,3 +27,5 @@ go vet ./...
 ## Limitations and roadmap
 
 Jobs and results exist only in memory. There is no durable storage, distributed coordination, or exactly-once execution guarantee. Future work: explicit result draining policy, exponential backoff with jitter, persistent job IDs, metrics, and dead-letter handling.
+
+See [architecture and correctness](docs/design.md) for synchronization invariants and operational limitations.

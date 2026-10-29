@@ -6,6 +6,7 @@ import (
  "errors"
  "fmt"
  "sync"
+ "sync/atomic"
  "time"
 )
 
@@ -15,7 +16,13 @@ type Job struct { ID string; Run func(context.Context) error }
 type Result struct { ID string; Attempts int; Err error }
 type Config struct { Workers int; Capacity int; MaxAttempts int; RetryDelay time.Duration; MaxRetryDelay time.Duration }
 
+type Stats struct { Accepted uint64; Started uint64; Succeeded uint64; Failed uint64; Retried uint64 }
 type Queue struct {
+ accepted atomic.Uint64
+ started atomic.Uint64
+ succeeded atomic.Uint64
+ failed atomic.Uint64
+ retried atomic.Uint64
  jobs chan Job
  slots chan struct{}
  results chan Result
@@ -55,6 +62,7 @@ func (q *Queue) Submit(ctx context.Context, job Job) error {
  if err := ctx.Err(); err != nil { q.slots <- struct{}{}; return err }
  if err := q.ctx.Err(); err != nil { q.slots <- struct{}{}; return err }
  q.jobs <- job
+ q.accepted.Add(1)
  return nil
 }
 func (q *Queue) worker() {
@@ -65,7 +73,9 @@ func (q *Queue) worker() {
   case job, ok := <-q.jobs:
    if !ok { return }
    q.slots <- struct{}{}
+   q.started.Add(1)
    result := q.execute(job)
+   if result.Err == nil { q.succeeded.Add(1) } else { q.failed.Add(1) }
    select { case q.results <- result: case <-q.ctx.Done(): return }
   }
  }
@@ -77,6 +87,7 @@ func (q *Queue) execute(job Job) Result {
   result.Attempts = attempt
   result.Err = runSafely(q.ctx, job.Run)
   if result.Err == nil { return result }
+  if attempt < q.cfg.MaxAttempts { q.retried.Add(1) }
   if attempt < q.cfg.MaxAttempts && q.cfg.RetryDelay > 0 {
    timer := time.NewTimer(retryDelay(q.cfg.RetryDelay, q.cfg.MaxRetryDelay, attempt))
    select {
@@ -119,4 +130,10 @@ func retryDelay(base, max time.Duration, failedAttempt int) time.Duration {
   delay *= 2
  }
  return delay
+}
+
+// Snapshot returns lock-free counters. A snapshot taken while work is active
+// is not a transactionally consistent view of all counters.
+func (q *Queue) Snapshot() Stats {
+ return Stats{Accepted:q.accepted.Load(), Started:q.started.Load(), Succeeded:q.succeeded.Load(), Failed:q.failed.Load(), Retried:q.retried.Load()}
 }

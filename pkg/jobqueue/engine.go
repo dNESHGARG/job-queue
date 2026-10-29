@@ -22,11 +22,10 @@ type EngineConfig struct {
 }
 
 // ExecutionResult describes a completed or failed job.
-type ExecutionResult struct {
- ID string
- Attempts int
- Err error
-}
+type ExecutionResult = queue.Result
+
+// Stats is a snapshot of execution counters.
+type Stats = queue.Stats
 
 func NewEngine(ctx context.Context, registry *Registry, cfg EngineConfig) (*Engine,error) {
  if registry==nil {return nil,errors.New("nil handler registry")}
@@ -46,9 +45,8 @@ func (e *Engine) Submit(ctx context.Context, job Job) error {
 }
 
 // Results must be consumed concurrently with execution and shutdown.
-// Callers receive a fresh channel with the same bounded backpressure behavior
-// as the underlying pool. Only call Results once per Engine.
-func (e *Engine) Results() <-chan queue.Result {return e.pool.Results()}
+// All consumers read from the same result stream; use one coordinated reader.
+func (e *Engine) Results() <-chan ExecutionResult {return e.pool.Results()}
 
 // Close rejects new work and waits for accepted work to finish.
 func (e *Engine) Close() {e.pool.Close()}
@@ -57,4 +55,4 @@ func (e *Engine) Close() {e.pool.Close()}
 func (e *Engine) Cancel() {e.pool.Cancel()}
 
 // Snapshot exposes current worker pool counters.
-func (e *Engine) Snapshot() queue.Stats {return e.pool.Snapshot()}
+func (e *Engine) Snapshot() Stats {return e.pool.Snapshot()}

@@ -49,4 +49,32 @@ err := registry.Dispatch(ctx, jobqueue.Job{
 
 Run `go run ./examples/handlers` for a complete standalone example.
 
-**Important:** These public extension contracts are currently a foundation, not yet integrated with the legacy in-memory worker pool in `internal/queue`. The `Store` interface does not by itself provide durable execution, scheduling, or recovery. Those features require implementations and integration, and will be developed with tests before any production-readiness claim.
+**Integration status:** The public `Engine` now dispatches registered handlers through the bounded in-memory worker pool. The `Store` interface is not yet connected to execution; it does not provide durability, scheduling, or crash recovery by itself.
+
+## Executing registered jobs
+
+```go
+registry := jobqueue.NewRegistry()
+_ = registry.Register("report.generate", jobqueue.HandlerFunc(
+    func(ctx context.Context, job jobqueue.Job) error {
+        return generateReport(ctx, job.Payload)
+    },
+))
+engine, err := jobqueue.NewEngine(ctx, registry, jobqueue.EngineConfig{
+    Workers: 4, Capacity: 100, MaxAttempts: 3,
+})
+if err != nil { return err }
+
+// Consume results concurrently, before shutdown.
+go func() {
+    for result := range engine.Results() {
+        log.Printf("job=%s attempts=%d error=%v", result.ID, result.Attempts, result.Err)
+    }
+}()
+err = engine.Submit(ctx, jobqueue.Job{
+    ID: "report-123", Type: "report.generate", Payload: []byte("input"),
+})
+// On application shutdown: engine.Close()
+```
+
+The execution API is still evolving. Scheduled execution, persistent claims, and lease recovery are not implemented yet.

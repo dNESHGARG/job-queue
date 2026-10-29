@@ -29,3 +29,24 @@ go vet ./...
 Jobs and results exist only in memory. There is no durable storage, distributed coordination, or exactly-once execution guarantee. Future work: explicit result draining policy, exponential backoff with jitter, persistent job IDs, metrics, and dead-letter handling.
 
 See [architecture and correctness](docs/design.md) for synchronization invariants and operational limitations.
+
+## Extensibility API (in progress)
+
+The new `pkg/jobqueue` package defines application-neutral `Job`, `Handler`, `Registry`, `Store`, `RetryPolicy`, and `Observer` contracts.
+
+```go
+registry := jobqueue.NewRegistry()
+_ = registry.Register("document.transform", jobqueue.HandlerFunc(
+    func(ctx context.Context, job jobqueue.Job) error {
+        // Application-specific work belongs here.
+        return nil
+    },
+))
+err := registry.Dispatch(ctx, jobqueue.Job{
+    ID: "task-1", Type: "document.transform", Payload: []byte("input"),
+})
+```
+
+Run `go run ./examples/handlers` for a complete standalone example.
+
+**Important:** These public extension contracts are currently a foundation, not yet integrated with the legacy in-memory worker pool in `internal/queue`. The `Store` interface does not by itself provide durable execution, scheduling, or recovery. Those features require implementations and integration, and will be developed with tests before any production-readiness claim.

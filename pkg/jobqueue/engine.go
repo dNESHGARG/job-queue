@@ -3,7 +3,6 @@ package jobqueue
 import (
  "context"
  "errors"
- "sync"
 
  "github.com/dNESHGARG/job-queue/internal/queue"
 )
@@ -13,8 +12,6 @@ import (
 type Engine struct {
  pool *queue.Queue
  registry *Registry
- mu sync.Mutex
- closed bool
 }
 
 // EngineConfig controls execution and retry behavior.

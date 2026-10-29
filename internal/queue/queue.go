@@ -13,7 +13,7 @@ var ErrInvalidConfig = errors.New("invalid worker configuration")
 var ErrClosed = errors.New("queue is closed")
 type Job struct { ID string; Run func(context.Context) error }
 type Result struct { ID string; Attempts int; Err error }
-type Config struct { Workers int; Capacity int; MaxAttempts int; RetryDelay time.Duration }
+type Config struct { Workers int; Capacity int; MaxAttempts int; RetryDelay time.Duration; MaxRetryDelay time.Duration }
 
 type Queue struct {
  jobs chan Job
@@ -29,7 +29,7 @@ type Queue struct {
  done chan struct{}
 }
 func New(parent context.Context, cfg Config) (*Queue, error) {
- if parent == nil || cfg.Workers < 1 || cfg.Capacity < 1 || cfg.MaxAttempts < 1 || cfg.RetryDelay < 0 { return nil, ErrInvalidConfig }
+ if parent == nil || cfg.Workers < 1 || cfg.Capacity < 1 || cfg.MaxAttempts < 1 || cfg.RetryDelay < 0 || cfg.MaxRetryDelay < 0 { return nil, ErrInvalidConfig }
  ctx, cancel := context.WithCancel(parent)
  q := &Queue{jobs: make(chan Job, cfg.Capacity), slots: make(chan struct{}, cfg.Capacity), results: make(chan Result, cfg.Capacity), cfg: cfg, ctx: ctx, cancel: cancel, stopping: make(chan struct{}), done: make(chan struct{})}
  for i := 0; i < cfg.Capacity; i++ { q.slots <- struct{}{} }
@@ -78,7 +78,7 @@ func (q *Queue) execute(job Job) Result {
   result.Err = runSafely(q.ctx, job.Run)
   if result.Err == nil { return result }
   if attempt < q.cfg.MaxAttempts && q.cfg.RetryDelay > 0 {
-   timer := time.NewTimer(q.cfg.RetryDelay)
+   timer := time.NewTimer(retryDelay(q.cfg.RetryDelay, q.cfg.MaxRetryDelay, attempt))
    select {
    case <-timer.C:
    case <-q.ctx.Done():
@@ -104,3 +104,19 @@ func (q *Queue) Close() {
 }
 // Cancel stops workers cooperatively; pending jobs may not produce results.
 func (q *Queue) Cancel() { q.cancel() }
+
+// retryDelay returns exponential backoff capped at max. A zero max means no
+// explicit cap; duration arithmetic still saturates to avoid overflow.
+func retryDelay(base, max time.Duration, failedAttempt int) time.Duration {
+ if base <= 0 { return 0 }
+ const maxDuration = time.Duration(1<<63 - 1)
+ capDelay := maxDuration
+ if max > 0 && max < capDelay { capDelay = max }
+ delay := base
+ if delay > capDelay { return capDelay }
+ for i := 1; i < failedAttempt; i++ {
+  if delay > capDelay/2 { return capDelay }
+  delay *= 2
+ }
+ return delay
+}
